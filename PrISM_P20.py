@@ -39,6 +39,61 @@ def antecedent_precipitation_index(
     sm_t1 = (sm_t0 - sm_res)*np.exp(-dt/tau) + (sm_sat - (sm_t0-sm_res))*(1-np.exp(-p_t1/d_soil)) + sm_res
     
     return sm_t1
+
+
+def inverse_antecedent_precipitation_index(
+    sm_t0 : float,       # soil moisture at t0 (m3/m3)
+    sm_res: float,       # residual soil moisture (m3/m3)
+    dt    : float,       # time step (h)      
+    tau   : float,       # soil moisture drying-out velocity (h)
+    sm_t1 : float,       # soil moisture at t1 (m3/m3)
+    d_soil: float ,      # soil thickness (mm)  
+    sm_sat: float = 0.45,     # saturated soil moisture (m3/m3) according to Pellarin 
+                                  ):
+    """
+    INVERSE Formula to calculate the Precipitation from the soil moisture inverting the API
+    from the formula as described in Pellarin et al., 2020
+    https://www.mdpi.com/2072-4292/12/3/481/htm
+    INPUTS:
+        sm_t0: float
+            Soil moisture (m3/m3) at time t0
+        sm_res: float
+            Residual soil moisture (m3/m3)
+        dt: float
+            Time step (h) used for the simulation (difference between t1 and t0)
+        tau: float   
+            Soil moisture drying-out velocity (h)
+        sm_t1: float  
+            Soil moisture (m3/m3) at time t1
+        d_soil: float
+            Soil thickness (mm) 
+        sm_sat: float
+            Saturated soil moisture (m3/m3) default is 0.45 (according to Pellarin et al., 2020 for Africa).  
+    OUTPUT:
+        sm_t1: float
+            Modelled soil moisture (m3/m3) at time t1
+    """
+    delta_sm0 = sm_t0-sm_res
+    pr_t1 = -d_soil*np.log(1 - ((sm_t1 - (delta_sm0*np.exp(-dt/tau)+sm_res))/(sm_sat-delta_sm0)))
+    return pr_t1
+
+
+def find_tau(prec  : float,       # precipitation (mm)
+    sm1   : float,       # soil moisture at t1 (m3/m3)
+    sm0   : float,       # soil moisture at t0 (m3/m3)
+    smres : float,       # residual soil moisture (m3/m3)
+    smsat : float,       # saturated soil moisture (m3/m3) 
+    dsoil : float ,      # soil thickness (mm)  
+    dt    : float,       # time step (h)
+        ):
+    """Function to calculate soil moisture drying-out velocity (h) using both soil moisture and precipitation/irrigation 
+    (inverting the API formula). """
+    dsm1 = sm1-smres
+    dsm0 = sm0-smres
+    val_log = (dsm1-(smsat-dsm0)*(1-np.exp(-prec/dsoil)))/dsm0
+    tau = dt/np.log(1/val_log)
+    return val_log, tau
+
 ########################################################################################################
 # According to Pellarin et al., 2013
 def calcualte_sm_sat_P2013(sand_percentage):
@@ -118,8 +173,35 @@ def calculate_api_ts(prec:pd.DataFrame, initial_sm:float = 3.7, params_api:dict 
             sm_pred.loc[inn,:] = initial_sm
         else:
             sm_pred.loc[inn,:] = antecedent_precipitation_index(sm_t0=sm_pred.iloc[it-1,:],
-                                                                    p_t1=prec.iloc[it,:],**params_api_final)
+                                                                p_t1=prec.iloc[it,:],**params_api_final)
     return sm_pred
+
+
+
+def calculate_inverse_api_ts(sm:pd.DataFrame, initial_prec:float = 0, params_api:dict = {}):
+    """
+    1st Wrapper: Function to performs API time-series computation for PrISM (Pellarin, 2020).
+    INPUTS:
+        sm: pandas.DataFrame
+            Dataframe/Series that has as index the datetime and as values Soil Moisture.
+        params_api: dict {str:float}
+            Additional params to be included for the calculation of the API [sm_res, dt, tau, p_t1, d_soil, sm_sat] otherwise default values are adopted (from Pellarin et al., 2020, Niger site, Figure 2).
+    """    
+    #check parameters api
+    dt = (sm.index[1] - sm.index[0]).components.hours
+    params_api_final = {'sm_res': 3, 'sm_sat': 45, 'dt': dt,'tau': 200, 'd_soil': 100}
+    params_api_final.update(params_api)
+    
+    #calculate api time-series
+    prec_pred = pd.DataFrame(index = sm.index, columns = sm.columns)
+    for it, inn in enumerate(sm.index):
+        if it==0:
+            prec_pred.loc[inn,:] = initial_prec
+        else:
+            prec_pred.loc[inn,:] = inverse_antecedent_precipitation_index(sm_t0=sm.iloc[it-1,:],
+                                                                          sm_t1=sm.iloc[it,:],
+                                                                          **params_api_final)        
+    return prec_pred
 
 def perturbate_series(series: pd.Series, n_perturbation: int = 100, min_val:float = 0, max_val:float = 2):
     """

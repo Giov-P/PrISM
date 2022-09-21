@@ -8,23 +8,29 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.dates import date2num
 
-def add_nice_xaxis(ax):
+def add_nice_xaxis(ax, fontsize = None):
     all_ticks = [(ll.get_text(), ll.get_position()) for ll in ax.xaxis.get_majorticklabels() if (ll.get_text()!='')&(ll.get_position()[0]>=0)]
-    months = pd.date_range(start = all_ticks[0][0], end = all_ticks[-1][0], freq='MS', normalize = True)
+    start = pd.Timestamp(all_ticks[0][0])
+    start = pd.Timestamp(year = start.year, month = start.month, day = 1)
+    months = pd.date_range(start = start, end = all_ticks[-1][0], freq='MS', normalize = True)
     labels = [dd.month_name()[0:3] if dd.month_name()[0:3] !='Jan' else dd.month_name()[0:3]+f'\n{dd.year}' for dd in months]
     years = ['' if dd.month_name()[0:3] !='Jan' else f'\n{dd.year}' for dd in months]
+    
     ax.set_xlim(all_ticks[0][1][0],all_ticks[-1][1][0])
     ax.xaxis.set_visible(False)
+    
     dr = pd.date_range(start = all_ticks[0][0], end = all_ticks[-1][0], normalize = True)
-    rr= pd.DataFrame([[f'{d.year}-{d.month:02d}'for d in dr],[1]*len(dr)], index =['A','count'], columns = dr).T
-    widths_labels = rr.groupby('A').sum()
-    widths_labels = (widths_labels/widths_labels.sum()).iloc[:,0].values
-    ax.table([labels],
-             cellColours=[['w']*len(labels)],
-             colWidths = widths_labels,
-              cellLoc='center',
-              loc='bottom',
-              bbox=[0,-0.15,1,0.15],
-             fontsize = 34
-            )
+    gb = [f'{y}{m:02d}' for m,y in zip(dr.month,dr.year)]
+    widths_labels = np.array([len(nn) for kk, nn in dr.groupby(gb).items()])
+    widths_labels = widths_labels/widths_labels.sum()
+    the_table = ax.table([labels],
+                         cellColours=[['w']*len(labels)],
+                         colWidths = widths_labels,
+                         cellLoc='center',
+                         loc='bottom',
+                         bbox=[0,-0.15,1,0.15]
+                        )
+    if fontsize is not None:
+        the_table.auto_set_font_size(False)
+        the_table.set_fontsize(fontsize)
     return ax
