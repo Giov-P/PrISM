@@ -34,3 +34,16 @@ def add_nice_xaxis(ax, fontsize = None):
         the_table.auto_set_font_size(False)
         the_table.set_fontsize(fontsize)
     return ax
+
+def draw_black_identity_line(ax):
+    """
+    Function to add a black identity line (y=x) in the background in correlation (scatter) plots to have a reference. 
+    """
+    xt = ax.get_xticks()
+    ll = xt[-1]-xt[0]
+    dd = (ll*1.5-ll)//2
+    val_kline = np.arange(xt[0]-dd, xt[-1]+dd)
+    blk_line = ax.plot(val_kline,val_kline,'k-', zorder = 0)
+    ax.set_xlim(xt[0], xt[-1])
+    ax.set_ylim(xt[0], xt[-1])
+    return ax
