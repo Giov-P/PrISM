@@ -102,9 +102,10 @@ class IRRI_PRISM_light:
         assumption_sprinkler=False,
         filtering_1d_nans=False,
         text_bar="",
+        kwargs_perturbation_factors_irr: dict = {},
+        kwargs_perturbation_factors_prec: dict = {},
     ):
         perfect_prec = False
-
         # 1st -> guess of irrigation
         if not assumption_sprinkler:
             if self.verbose:
@@ -146,11 +147,25 @@ class IRRI_PRISM_light:
         self.guess_max = self.guess_max.add(self.prec, axis="index")
 
         # 3rd -> create particle filter
-        self.pf_values = self.create_factors_particle_filters(
+        kwargs_perturbation_factors_irr_default = dict(
             n_perturbation=150, min_val=0.1, max_val=10, n_zeros=50
         )
-        self.pf_factors_zeroirr = self.create_factors_particle_filters(
+        if kwargs_perturbation_factors_irr:
+            kwargs_perturbation_factors_irr_default.update(
+                kwargs_perturbation_factors_irr
+            )
+        self.pf_values = self.create_factors_particle_filters(
+            **kwargs_perturbation_factors_irr_default
+        )
+        kwargs_perturbation_factors_prec_default = dict(
             n_perturbation=150, min_val=0.9, max_val=1.1, n_zeros=0
+        )
+        if kwargs_perturbation_factors_prec:
+            kwargs_perturbation_factors_prec_default.update(
+                kwargs_perturbation_factors_prec
+            )
+        self.pf_factors_zeroirr = self.create_factors_particle_filters(
+            **kwargs_perturbation_factors_prec_default
         )
         # 4th -> apply particle filter
         (
@@ -290,7 +305,6 @@ class IRRI_PRISM_light:
             until_index = steps_index[it + 1]  # - high_res
 
             n_elements = len(satellite_sm.loc[start:stop])
-            # print(center, n_elements)
             if it == 0:
                 initial_sm_value = satellite_sm.apply(select_initial_sm, axis=0)
             else:
@@ -319,8 +333,6 @@ class IRRI_PRISM_light:
                 sel = rmse.sort_values().iloc[0:n_best_values].index
                 p1 = sim_sm.loc[start:stop, sel].mean(axis=1)
                 tot_table_sm.loc[start:stop, (coords, f"win_{it}")] = p1
-        if self.verbose:
-            print(self.guess_min)
         ## irrigation from the retrieved soil moisture
         final_irr = self.calculate_inverse_api(
             sat_sm=tot_table_sm.mean(axis=1, level=0).dropna(axis=0),
@@ -875,7 +887,7 @@ class IRRI_PRISM_light:
             until_index = steps_index[it + 1]  # - high_res
 
             n_elements = len(satellite_sm.loc[start:stop])
-            # print(center, n_elements)
+
             if it == 0:
                 initial_sm_value = satellite_sm.apply(select_initial_sm, axis=0)
             else:
@@ -907,8 +919,6 @@ class IRRI_PRISM_light:
                 sel = rmse.sort_values().iloc[0:n_best_values].index
                 p1 = sim_sm.loc[start:stop, sel].mean(axis=1)
                 tot_table_sm.loc[start:stop, (coords, f"win_{it}")] = p1
-        if self.verbose:
-            print("GUESS MIN\n", self.guess_min)
         ## irrigation from the retrieved soil moisture
         final_irr = self.calculate_inverse_api(
             sat_sm=tot_table_sm.mean(axis=1, level=0).dropna(axis=0),
