@@ -29,8 +29,9 @@ def make_nice_hist(datas: pd.DataFrame, final_res="5min", frequency_irr="hour"):
         if len(datas.shape) == 1:
             condition = to_plot.index.minute != 0
 
-    if frequency_irr == "3H":
-        con = np.invert((to_plot.index.minute == 0) & (to_plot.index.hour == 3))
+    elif "H" in frequency_irr:
+        hours_to_divide = pd.Timedelta(frequency_irr).components.hours
+        con = np.invert((to_plot.index.minute == 0) & (to_plot.index.hour%hours_to_divide==0))
         condition = np.tile(con, (len(to_plot.columns), 1)).T
         if len(datas.shape) == 1:
             condition = to_plot.index.minute != 0
@@ -40,6 +41,9 @@ def make_nice_hist(datas: pd.DataFrame, final_res="5min", frequency_irr="hour"):
 
     elif frequency_irr == "month":
         condition = np.tile(to_plot.index.day != 0, (len(to_plot.columns), 1)).T
+
+    else:
+        raise TypeError(f"the specified frequency_irr = {frequency_irr} does not correspond to the required string format = ['hour','day','month'] of 'xH', where x is the number of hours.")
 
     to_plot.where(condition, 0, inplace=True, axis=0)
     return to_plot
