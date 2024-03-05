@@ -317,7 +317,7 @@ class IRRI_PRISM_light:
                 prec=perturbed_irr_dataset.loc[start:stop],
                 initial_sm=start_soil_moisture,
                 dt=high_res / pd.Timedelta("1H"),
-                params_api=params_api,
+                params_api=params_api.copy(),
                 disable_bar=True,
             )
 
@@ -337,14 +337,14 @@ class IRRI_PRISM_light:
         final_irr = self.calculate_inverse_api(
             sat_sm=tot_table_sm.mean(axis=1, level=0).dropna(axis=0),
             initial_prec=0,
-            params_api=self.params_api,
+            params_api=self.params_api.copy(),
         ).astype(float)
         final_irr = final_irr.where(final_irr > 0, 0)
         ## final soil moisture corrected
         final_sm = self.calculate_api(
             prec=final_irr,
             initial_sm=tot_table_sm.mean(axis=1, level=0).dropna(axis=0).iloc[0],
-            params_api=self.params_api,
+            params_api=self.params_api.copy(),
         )
 
         return final_irr, final_sm, tot_table_sm  # prism_irr_table, prism_sm_table
@@ -693,7 +693,7 @@ class IRRI_PRISM_light:
         if dataframe is None:
             res = []
             for df in [self.guess_min, self.guess_max]:
-                res.append(self.create_perturbed_dataset(dataframe=df))
+                res.append(self.create_perturbed_dataset(dataframe=df, pf_factors = pf_factors, add_norrigation_datasets=add_norrigation_datasets))
             return res
 
         dataframe_perturbed = self.perturbed_dataframe_multiplication(
@@ -788,149 +788,3 @@ class IRRI_PRISM_light:
         # check - it cannot be lower than residual soil moisture
         start_sm = np.where(start_sm < res_sm, res_sm, start_sm)
         return start_sm
-
-    def prism_function_v2p1_2D(
-        self,
-        perturbed_irr_dataset: pd.DataFrame = None,
-        satellite_sm: pd.DataFrame = None,
-        high_res: pd.Timedelta = None,
-        steps_index: pd.DatetimeIndex = None,
-        window: int = 5,
-        filtering_1d_nans=False,
-        n_best_values: int = 1,
-        text_bar="",
-    ):
-        if self.verbose:
-            print(f"\n\n\n\n WINDOW = {window}!")
-        # check inputs
-        if perturbed_irr_dataset is None:
-            perturbed_irr_dataset = self.guess_min_perturbed
-        if satellite_sm is None:
-            satellite_sm = self.sat_sm
-        if filtering_1d_nans:
-            if self.verbose:
-                print("\n\nFILTERING GAPS!\n\n")
-            # check for too many consecutive NaNs (only works for 1D timeseries of daily Soil Moisture)
-            # count the consecutive NaNs in the time series
-            col1 = satellite_sm.columns[0]
-            satellite_sm["consecutive_NaNs"] = (
-                satellite_sm[col1]
-                .isnull()
-                .astype(int)
-                .groupby(satellite_sm[col1].notnull().astype(int).cumsum())
-                .cumsum()
-            )
-            #  remove row if there are more than 4 consecutive NaNs
-            satellite_sm = satellite_sm[
-                satellite_sm["consecutive_NaNs"] < window - 1
-            ].loc[:, [col1]]
-        if high_res is None:
-            high_res = self.res_prec
-        if steps_index is None:
-            if self.res_prec < pd.Timedelta("1D"):
-                #                 steps_index = satellite_sm.resample('1D').mean().dropna().index
-                steps_index = (
-                    satellite_sm.groupby(satellite_sm.index.date)
-                    .apply(lambda x: x.index[0])
-                    .values
-                )
-            else:
-                steps_index = satellite_sm.dropna(how="all", axis=1).index
-        self.steps_index = steps_index
-        # parameters
-        sort_columns_order = perturbed_irr_dataset.loc[
-            :, perturbed_irr_dataset.columns.get_level_values(0)[0]
-        ].columns
-        n_perturbations = len(set(perturbed_irr_dataset.columns.get_level_values(0)))
-        params_api = self.params_api.copy()
-        params_api["tau"] = pd.concat(
-            [params_api["tau"].loc[:, sort_columns_order]] * n_perturbations, axis=1
-        )
-        params_api["tau"].columns = perturbed_irr_dataset.columns
-        params_api["sm_res"] = pd.concat(
-            [params_api["sm_res"].loc[sort_columns_order]] * n_perturbations
-        )
-        params_api["sm_res"].index = perturbed_irr_dataset.columns
-        params_api["sm_sat"] = pd.concat(
-            [params_api["sm_sat"].loc[sort_columns_order]] * n_perturbations
-        )
-        params_api["sm_sat"].index = perturbed_irr_dataset.columns
-
-        # outputs
-        mc = list(
-            product(
-                set(perturbed_irr_dataset.columns.get_level_values(1)),
-                [f"win_{ind}" for ind in range(len(steps_index[:-1]))],
-            )
-        )
-        tot_table_sm = pd.DataFrame(
-            index=perturbed_irr_dataset.index, columns=pd.MultiIndex.from_tuples(mc)
-        )
-
-        for it, center in ntqdm(
-            enumerate(steps_index[:-1]),
-            total=len(steps_index[:-1]),
-            desc=f"PrISM 2.1 {text_bar}",
-            disable=(not self.verbose),
-        ):
-            index_start = it - window // 2
-            if index_start <= 0:
-                index_start = 0
-            start = steps_index[index_start]
-
-            index_stop = it + window // 2 + 1
-            if index_stop >= len(steps_index):
-                index_stop = -1
-            stop = steps_index[index_stop]
-
-            from_index = center
-            until_index = steps_index[it + 1]  # - high_res
-
-            n_elements = len(satellite_sm.loc[start:stop])
-
-            if it == 0:
-                initial_sm_value = satellite_sm.apply(select_initial_sm, axis=0)
-            else:
-                initial_sm_value = tot_table_sm.loc[start, :].groupby(level=0).mean()
-
-            self.in_val = initial_sm_value[sort_columns_order].values
-            start_soil_moisture = self.create_noise_sm_at_t0(
-                initial_sm_value[sort_columns_order].values
-            )
-            #             start_soil_moisture = pd.Series(np.tile(initial_sm_value[sort_columns_order], n_perturbations),
-            #                                             index = perturbed_irr_dataset.columns)
-            # 1. calculate perturbed soil moisture
-            sim_sm = self.calculate_api(
-                prec=perturbed_irr_dataset.loc[start:stop],
-                initial_sm=start_soil_moisture,
-                dt=high_res / pd.Timedelta("1H"),
-                params_api=params_api.copy(),
-            )
-
-            # 2. calculate best rmse
-            for coords, sim_group in sim_sm.groupby(level=1, axis=1):
-                indd = satellite_sm.loc[start:stop, coords].index
-                errors = (
-                    sim_group.loc[indd, :].astype(float).T
-                    - satellite_sm.loc[indd, coords].values
-                ) ** 2
-                rmse = errors.mean(axis=1) ** (0.5)
-                # 3. find best irrigation and soil moisture and save them in the table
-                sel = rmse.sort_values().iloc[0:n_best_values].index
-                p1 = sim_sm.loc[start:stop, sel].mean(axis=1)
-                tot_table_sm.loc[start:stop, (coords, f"win_{it}")] = p1
-        ## irrigation from the retrieved soil moisture
-        final_irr = self.calculate_inverse_api(
-            sat_sm=tot_table_sm.mean(axis=1, level=0).dropna(axis=0),
-            initial_prec=0,
-            params_api=self.params_api.copy(),
-        ).astype(float)
-        final_irr = final_irr.where(final_irr > 0, 0)
-        ## final soil moisture corrected
-        final_sm = self.calculate_api(
-            prec=final_irr,
-            initial_sm=tot_table_sm.mean(axis=1, level=0).dropna(axis=0).iloc[0],
-            params_api=self.params_api.copy(),
-        )
-
-        return final_irr, final_sm, tot_table_sm  # prism_irr_table, prism_sm_table
